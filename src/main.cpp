@@ -5,12 +5,13 @@
 #include <ESP8266HTTPClient.h>
 
 #include "credentials.h"
+#include "LamaxAPI.h"
 
 namespace pins
 {
-	int redLed = 0;
-	int greenLed = 12;
-	int button = 14;
+	int smallBlueLed = LED_BUILTIN;
+	int bigBlueLed = LED_BUILTIN_AUX;
+	int button = D1;
 
 	uint8_t ledOn = LOW;
 	uint8_t ledOff = HIGH;
@@ -18,11 +19,12 @@ namespace pins
 
 unsigned long lastTrigger = 0;
 unsigned long buttonTime = 0;
-const unsigned long triggerInterval = 1000;
+const unsigned long triggerInterval = 800;
 bool wasConnectedToWifi = false;
+bool isRecording = false;
 
 // handlers must be in RAM
-ICACHE_RAM_ATTR void onButtonReleased()
+ICACHE_RAM_ATTR void onButtonPressed()
 {
 	buttonTime = millis();
 }
@@ -30,12 +32,12 @@ ICACHE_RAM_ATTR void onButtonReleased()
 void setup(void)
 {
 	// GPIO
-	pinMode(pins::redLed, OUTPUT);
-	pinMode(pins::greenLed, OUTPUT);
-	digitalWrite(pins::redLed, pins::ledOff);
-	digitalWrite(pins::greenLed, pins::ledOff);
+	pinMode(pins::smallBlueLed, OUTPUT);
+	pinMode(pins::bigBlueLed, OUTPUT);
+	digitalWrite(pins::smallBlueLed, pins::ledOff);
+	digitalWrite(pins::bigBlueLed, pins::ledOff);
 	pinMode(pins::button, INPUT_PULLUP);
-	attachInterrupt(pins::button, onButtonReleased, RISING);
+	attachInterrupt(pins::button, onButtonPressed, FALLING);
 
 	// UART
 	Serial.begin(115200);
@@ -48,7 +50,7 @@ void setup(void)
 
 void onConnectedToWifi()
 {
-	digitalWrite(pins::greenLed, pins::ledOn);
+	digitalWrite(pins::smallBlueLed, pins::ledOn);
 
 	Serial.println("");
 	Serial.print("Connected to ");
@@ -57,11 +59,22 @@ void onConnectedToWifi()
 	Serial.println(WiFi.localIP());
 }
 
+void onDisconnectedFromWifi()
+{
+	digitalWrite(pins::smallBlueLed, pins::ledOff);
+	Serial.println("Disconnected");
+}
+
 void loop(void)
 {
 	// return if not connected
 	if (WiFi.status() != WL_CONNECTED)
 	{
+		if (wasConnectedToWifi)
+		{
+			onDisconnectedFromWifi();
+		}
+
 		wasConnectedToWifi = false;
 		return;
 	}
@@ -76,10 +89,27 @@ void loop(void)
 	if(buttonTime - lastTrigger >= triggerInterval)
 	{
 		lastTrigger = buttonTime;
+
 		WiFiClient wifiClient;
 		HTTPClient triggerClient;
-		triggerClient.begin(wifiClient, credentials::webhooksUrlWithKey);
+		if (isRecording)
+		{
+			Serial.println("stopping");
+			triggerClient.begin(wifiClient, LamaxAPI::stopUrl);
+		}
+		else
+		{
+			Serial.println("starting");
+			triggerClient.begin(wifiClient, LamaxAPI::startUrl);
+		}
+
 		int respCode = triggerClient.GET();
+		if (respCode == 200)
+		{
+			isRecording = !isRecording;
+			digitalWrite(pins::bigBlueLed, isRecording ? pins::ledOn : pins::ledOff);
+		}
+
 		Serial.println("http resp code:");
 		Serial.println(respCode);
 		triggerClient.end();
